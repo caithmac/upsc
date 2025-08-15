@@ -154,10 +154,10 @@ export const transcribeAnswerSheet = async (documentFile: File): Promise<string>
         
         Your task is to:
         1. Identify each distinct question and its corresponding answer.
-        2. Transcribe both the question and the answer text accurately.
+        2. Transcribe both the question and the answer text accurately. If you encounter text that is illegible or difficult to read, represent it with the placeholder '[illegible]'. Do not guess the word.
         3. Separate each complete question-and-answer pair with the exact delimiter: '--- Q&A SEPARATOR ---'.
 
-        Your response should contain only the transcribed text and the separators. Do not add any other commentary, titles, or formatting.`;
+        Your response should contain only the transcribed text and the separators. Do not add any other commentary, titles, or formatting. If you cannot identify a clear question and answer structure, return an empty response.`;
         
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
@@ -186,6 +186,7 @@ async function analyzeQuestionAndGetClassification(qnaText: string): Promise<{ q
 You are a UPSC exam analysis tool. Given a block of transcribed text containing a question and its answer, your tasks are:
 1. Separate the question from the answer.
 2. Analyze the QUESTION and classify it according to the provided criteria.
+3. Estimate the expected word count for a comprehensive answer based on the question's complexity.
 
 Transcribed Text:
 ---
@@ -199,7 +200,8 @@ Return a single JSON object with the following structure:
   "classification": {
     "questionType": "ESSAY|FACTUAL|CASE_STUDY|CURRENT_AFFAIRS|DIAGRAM_BASED|COMPARATIVE|ANALYTICAL",
     "subject": "History|Geography|Polity|Economics|Environment|Ethics|InternationalRelations|ScienceTech",
-    "expectedWordCount": 250,
+    "subTopic": "e.g., for History: Ancient, Medieval, Modern",
+    "estimatedWordCount": "e.g., 150, 250, 500",
     "keyRequirements": ["requirement1", "requirement2"],
     "evaluationFocus": ["content", "structure", "examples", "analysis"]
   }
@@ -215,11 +217,12 @@ Return a single JSON object with the following structure:
                 properties: {
                     questionType: { type: Type.STRING, enum: ["ESSAY", "FACTUAL", "CASE_STUDY", "CURRENT_AFFAIRS", "DIAGRAM_BASED", "COMPARATIVE", "ANALYTICAL"] },
                     subject: { type: Type.STRING, enum: ["History", "Geography", "Polity", "Economics", "Environment", "Ethics", "InternationalRelations", "ScienceTech"] },
-                    expectedWordCount: { type: Type.NUMBER },
+                    subTopic: { type: Type.STRING },
+                    estimatedWordCount: { type: Type.NUMBER },
                     keyRequirements: { type: Type.ARRAY, items: { type: Type.STRING } },
                     evaluationFocus: { type: Type.ARRAY, items: { type: Type.STRING } }
                 },
-                required: ["questionType", "subject", "expectedWordCount", "keyRequirements", "evaluationFocus"]
+                required: ["questionType", "subject", "subTopic", "estimatedWordCount", "keyRequirements", "evaluationFocus"]
             }
         },
         required: ["question", "answer", "classification"]
@@ -311,7 +314,8 @@ export const gradeAnswerSheet = async (documentFile: File, transcribedText: stri
                 context: {
                     questionType: classification.questionType,
                     subject: classification.subject,
-                    expectedWordCount: classification.expectedWordCount,
+                    subTopic: classification.subTopic,
+                    estimatedWordCount: classification.estimatedWordCount,
                     keyRequirements: classification.keyRequirements,
                     subjectSpecificCriteria
                 },
@@ -321,12 +325,53 @@ export const gradeAnswerSheet = async (documentFile: File, transcribedText: stri
         });
 
         const prompt = `
-You are an expert UPSC examiner with 20+ years of experience. Evaluate a batch of answers based on the provided context for each.
+You are a notoriously strict but fair UPSC examiner, known for providing brutally honest but highly constructive feedback. Your goal is to push the candidate to their absolute best.
+
+First, for each item in the EVALUATION BATCH, you will "think" step-by-step to form a coherent evaluation.
+
+**Chain of Thought Process:**
+1.  **Summarize the core arguments:** Briefly outline the main points the candidate has made in their answer.
+2.  **Compare with an ideal answer:** Mentally construct the key points of an ideal, high-scoring answer. Compare the candidate's answer to this ideal. Identify any gaps, inaccuracies, or irrelevant information.
+3.  **Evaluate against the rubric:** Score the answer against each dimension of the detailed scoring rubric provided below. Be critical and justify each score.
+4.  **Formulate feedback:** Based on the evaluation, formulate specific, actionable strengths, weaknesses, and improvement suggestions. Avoid generic statements.
+5.  **Review and self-correct:** Review your entire evaluation for fairness, consistency, and accuracy. Ensure the feedback is constructive and directly addresses the candidate's performance.
+
+**Detailed Scoring Rubric (out of 10):**
+-   **Content Accuracy (40% weight):**
+    -   1-2: Major factual errors, misunderstanding of the core topic.
+    -   3-4: Some inaccuracies, but a basic understanding is present.
+    -   5-6: Mostly accurate, but with some minor errors or omissions.
+    -   7-8: Highly accurate, demonstrating a strong grasp of the topic.
+    -   9-10: Flawless accuracy, with nuanced understanding and command of the subject.
+-   **Analytical Depth (30% weight):**
+    -   1-2: Purely descriptive, no analysis.
+    -   3-4: Basic analysis, but lacks depth.
+    -   5-6: Good analysis, but could explore more dimensions.
+    -   7-8: Strong, multi-faceted analysis.
+    -   9-10: Exceptional analytical skills, providing unique insights.
+-   **Structure and Presentation (15% weight):**
+    -   1-2: Disorganized, no clear structure.
+    -   3-4: Some structure, but illogical flow.
+    -   5-6: Clear introduction and conclusion, but paragraphs could be better organized.
+    -   7-8: Well-structured, with a logical flow.
+    -   9-10: Impeccable structure, a pleasure to read.
+-   **Language and Clarity (15% weight):**
+    -   1-2: Many grammatical errors, difficult to understand.
+    -   3-4: Some errors, but the meaning is mostly clear.
+    -   5-6: Clear and concise for the most part.
+    -   7-8: Articulate and well-written.
+    -   9-10: Exceptional command of language, eloquent and precise.
+
+**Negative Prompts (What to Avoid):**
+-   Do not provide generic or vague feedback (e.g., "needs more detail").
+-   Do not be overly lenient. The standards are high.
+-   Do not invent information not present in the answer.
+
+After your internal "thinking" process, provide a detailed evaluation for EACH answer in the batch. Your final output MUST be a JSON array, where each object in the array corresponds to an answer from the input batch and follows the specified JSON schema.
 
 EVALUATION BATCH:
 ${JSON.stringify(evaluationBatch, null, 2)}
 
-Provide a detailed evaluation for EACH answer in the batch. Your final output MUST be a JSON array, where each object in the array corresponds to an answer from the input batch and follows the specified JSON schema.
 Ensure the output is a valid JSON array of evaluation objects.
 `;
 
