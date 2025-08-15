@@ -1,0 +1,5 @@
+{
+  "name": "AI Grader for Civil Services",
+  "description": "An AI-powered tool to grade handwritten answer sheets for the Civil Services Examination. Upload an image of your answer to receive a detailed, constructive review covering content, structure, and presentation, helping you improve your score.",
+  "requestFramePermissions": []
+}
